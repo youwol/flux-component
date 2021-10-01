@@ -44,13 +44,6 @@ return ( {data, context, instanceIndex}) => 'replica_'+instanceIndex
         })
         layoutType: string = 'flex-row'
 
-        /*@Property({
-            description:"View definition",
-            type:'code'
-        })
-        viewDefinitions: string | ( (data: CellData) => HTMLReactiveElement )
-        */
-
         constructor(params:
             {innerContextName?:string, replicaIdGenerator?:string}={}) {
             Object.assign(this, params)
@@ -61,16 +54,6 @@ return ( {data, context, instanceIndex}) => 'replica_'+instanceIndex
             return typeof this.replicaIdGenerator == 'string' 
                 ? new Function(this.replicaIdGenerator)()
                 : this.replicaIdGenerator
-        }
-    }
-
-    class CellData {
-
-        // this guy enabled to plug new reactivity pathways in rendering
-        signal$ = new Subject<any>()
-
-        constructor(id: string, name: string, 
-            public readonly input: {data, configuration, context}, public view?: HTMLDivElement){
         }
     }
 
@@ -96,8 +79,7 @@ return ( {data, context, instanceIndex}) => 'replica_'+instanceIndex
     export class Module extends ReplicatorModuleBase {
         
         tabDiv : HTMLDivElement
-
-        cellsData : {[key:string]: CellData} = {}
+        subscriptions : Subscription[] = new Array<Subscription>()
 
         constructor(params) { 
             super( params ) 
@@ -107,13 +89,15 @@ return ( {data, context, instanceIndex}) => 'replica_'+instanceIndex
            return config.getReplicaIdGenerator()({data,context,instanceIndex:this.replicas.size}) 
         }
 
-        subscription : Subscription
+        
         apply(){
             super.apply()
-            this.subscription = this.componentDiv$.subscribe( componentDiv => {
-                componentDiv.classList.add("flux-builder-only")
-                componentDiv.style.setProperty('opacity','0.5')
-            })
+            this.subscriptions.push(
+                this.componentDiv$.subscribe( componentDiv => {
+                    componentDiv.classList.add("flux-builder-only")
+                    componentDiv.style.setProperty('opacity','0.5')
+                })
+            )
         }
 
         dispose(){
@@ -124,7 +108,7 @@ return ( {data, context, instanceIndex}) => 'replica_'+instanceIndex
                 componentDiv.style.setProperty('opacity','1') 
                 componentDiv.classList.remove("flux-builder-only")
             })
-            this.subscription.unsubscribe()
+            this.subscriptions.forEach( s => s.unsubscribe() )
         }
     }
 
@@ -133,10 +117,10 @@ return ( {data, context, instanceIndex}) => 'replica_'+instanceIndex
 
     function renderHtmlElement(mdle: Module){
 
-        let ready$ = new ReplaySubject<HTMLDivElement>()
+        let container$ = new ReplaySubject<HTMLElement>()
         
-        let sub = combineLatest([ready$, mdle.newInstance$])
-        .subscribe( ([div, replica]: [HTMLDivElement, Replica]) => {
+        let sub = combineLatest([container$, mdle.newInstance$])
+        .subscribe( ([container, replica]: [HTMLElement, Replica]) => {
             
             let component = replica.rootComponent as Component.Module
             let templateHTML = component.getHTML({recursive:false})
@@ -150,44 +134,17 @@ return ( {data, context, instanceIndex}) => 'replica_'+instanceIndex
 
             divContent.style.setProperty('opacity','1')
             mdle.registerView(divContent)
-            div.parentElement.parentElement.appendChild(divContent)
+            container.appendChild(divContent)
         })
 
         let virtualDOM : VirtualDOM = {
             connectedCallback: (elem: HTMLDivElement & HTMLElement$) => {
                 console.log("VIEW PLUGIN INSTALLED "+mdle.parentModule.configuration.title, {module:mdle})
-                ready$.next(elem)
+                container$.next(elem.parentElement.parentElement)
                 elem.ownSubscriptions(sub)
             }
         }
 
         return render(virtualDOM)
     }
-
-/*
-    function decorate(mdle:Module, templateDiv:HTMLDivElement, display: string) : HTMLDivElement{
-
-        let vDOM : VirtualDOM = {
-            class:"w-100 h-100 d-flex "+mdle.getPersistentData<PersistentData>().layoutType,
-            children:childrenAppendOnly$(
-                mdle.newInstance$.pipe(
-                    map( e => [e])
-                ),
-                (replicaData: ReplicaData) => {
-                    return  {
-                        class:'border border-rounded',
-                        connectedCallback: (elem: HTMLDivElement) => {
-                            let clone = mdle.cloneHTML(replicaData, templateDiv)
-                            clone.style.setProperty('display',display)
-                            elem.appendChild(clone)
-                        }
-                    }
-                    
-                }
-            )
-        }
-
-        return render(vDOM) as any
-    }
-*/
 }
