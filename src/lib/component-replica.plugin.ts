@@ -1,10 +1,10 @@
 
-import { combineLatest, ReplaySubject, Subject, Subscription } from 'rxjs';
-import { GroupModules, BuilderView, Flux, Property, Schema, RenderView, Component, renderTemplate } from '@youwol/flux-core';
+import { BehaviorSubject, combineLatest, ReplaySubject, Subject, Subscription } from 'rxjs';
+import { GroupModules, BuilderView, Flux, Property, Schema, RenderView, Component, renderTemplate, Workflow } from '@youwol/flux-core';
 import { pack } from './main'
 import { take } from 'rxjs/operators';
 import { Replica, ReplicatorModuleBase } from './replication';
-import { HTMLElement$, render, VirtualDOM} from '@youwol/flux-view'
+import { attr$, HTMLElement$, render, VirtualDOM} from '@youwol/flux-view'
 
 
 export namespace ComponentReplica {
@@ -79,7 +79,6 @@ return ( {data, context, instanceIndex}) => 'replica_'+instanceIndex
     export class Module extends ReplicatorModuleBase {
         
         tabDiv : HTMLDivElement
-        subscriptions : Subscription[] = new Array<Subscription>()
 
         constructor(params) { 
             super( params ) 
@@ -108,7 +107,6 @@ return ( {data, context, instanceIndex}) => 'replica_'+instanceIndex
                 componentDiv.style.setProperty('opacity','1') 
                 componentDiv.classList.remove("flux-builder-only")
             })
-            this.subscriptions.forEach( s => s.unsubscribe() )
         }
     }
 
@@ -118,30 +116,49 @@ return ( {data, context, instanceIndex}) => 'replica_'+instanceIndex
     function renderHtmlElement(mdle: Module){
 
         let container$ = new ReplaySubject<HTMLElement>()
-        
-        let sub = combineLatest([container$, mdle.newInstance$])
+        let replicationStarted$ = new Subject()
+
+        let subNew = combineLatest([container$, mdle.newInstance$])
         .subscribe( ([container, replica]: [HTMLElement, Replica]) => {
             
             let component = replica.rootComponent as Component.Module
-            let templateHTML = component.getHTML({recursive:false})
-            let divContent = renderTemplate(templateHTML, replica.rootComponent.getDirectChildren())
+            let templateHTML = component.getOuterHTML()
+            let divContent = renderTemplate(templateHTML, replica.rootComponent.getDirectChildren(replica.workflow))
     
             divContent.id = replica.rootComponent.moduleId
             divContent.classList.add("flux-element", "replica", mdle.parentModule.moduleId)
             divContent.classList.remove("flux-builder-only")
 
-            console.log("TEMPLATE GENERATED "+mdle.parentModule.configuration.title, {module:mdle})
-
             divContent.style.setProperty('opacity','1')
-            mdle.registerView(divContent)
+            mdle.registerView(replica.replicaId, divContent)
+            replicationStarted$.next(true)
             container.appendChild(divContent)
         })
 
+        // The subscription is not transferred to the view because the view is removed 'too late'
+        // in the process (the previous subscribe would get executed while the module is already 'disposed')
+        mdle.subscriptions.push(subNew)
+
+
+        let html = mdle.parentModule.getOuterHTML()
+
         let virtualDOM : VirtualDOM = {
+            id:html.id,
+            class:attr$( 
+                replicationStarted$,
+                () => 'd-none',
+                {
+                    untilFirst: html.classList.toString(),
+                    wrapper: (d) => d + " flux-builder-only"
+                }
+            ),
+            children:[
+                {   class:'m-auto',
+                    innerText: `👻 I'm a visual indicator for "${mdle.parentModule.configuration.title}"'s replication; I'll disappear when data comes in`
+                }
+            ],
             connectedCallback: (elem: HTMLDivElement & HTMLElement$) => {
-                console.log("VIEW PLUGIN INSTALLED "+mdle.parentModule.configuration.title, {module:mdle})
                 container$.next(elem.parentElement.parentElement)
-                elem.ownSubscriptions(sub)
             }
         }
 
